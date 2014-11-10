@@ -409,9 +409,11 @@ zip_time(const char *p)
  *  triplets.  id and size are 2 bytes each.
  */
 static void
-process_extra(const char *p, size_t extra_length, struct zip_entry* zip_entry)
+process_extra(struct archive_read *a, struct archive_entry *entry,
+		const char *p, size_t extra_length, struct zip_entry* zip_entry)
 {
 	unsigned offset = 0;
+	struct zip *zip = (struct zip *)(a->format->data);
 
 	while (offset < extra_length - 4) {
 		unsigned short headerid = archive_le16dec(p + offset);
@@ -604,6 +606,35 @@ process_extra(const char *p, size_t extra_length, struct zip_entry* zip_entry)
 				/* Comment is not supported by libarchive */
 				offset += comment_length;
 				datasize -= comment_length;
+			}
+			break;
+		}
+		case 0x7075:
+		{
+			/* Info-ZIP Unicode Path Extra Field. */
+			if (datasize < 5 || entry == NULL)
+				break;
+			offset += 5;
+			datasize -= 5;
+
+			/* The path name in this field is always encoded in UTF-8. */
+			if (zip->sconv_utf8 == NULL) {
+				zip->sconv_utf8 =
+					archive_string_conversion_from_charset(
+					&a->archive, "UTF-8", 1);
+				// If the converter from UTF-8 is not available, then the
+				// path name from the main field will more likely be correct.
+				if (zip->sconv_utf8 == NULL)
+					break;
+			}
+			if (zip->sconv_utf8 == NULL)
+				break;
+
+			if (archive_entry_copy_pathname_l(entry,
+				p + offset, datasize, zip->sconv_utf8) != 0) {
+				// Ignore the error, and fallback to the path name from the main
+				// field.
+				fprintf(stderr,	"Failed to read the extra field path.\n");
 			}
 			break;
 		}
@@ -831,7 +862,7 @@ zip_read_local_file_header(struct archive_read *a, struct archive_entry *entry,
 		return (ARCHIVE_FATAL);
 	}
 
-	process_extra(h, extra_length, zip_entry);
+	process_extra(a, entry, h, extra_length, zip_entry);
 	__archive_read_consume(a, extra_length);
 
 	if (zip_entry->flags & LA_FROM_CENTRAL_DIRECTORY) {
@@ -2592,7 +2623,7 @@ slurp_central_directory(struct archive_read *a, struct zip *zip)
 			    "Truncated ZIP file header");
 			return ARCHIVE_FATAL;
 		}
-		process_extra(p + filename_length, extra_length, zip_entry);
+		process_extra(a, NULL, p + filename_length, extra_length, zip_entry);
 
 		/*
 		 * Mac resource fork files are stored under the
