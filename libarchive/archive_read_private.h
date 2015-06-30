@@ -198,10 +198,6 @@ struct archive_read {
 	/* File offset of beginning of most recently-read header. */
 	int64_t		  header_position;
 
-	/* Offset of the farthest read header. Used for counting files while
-	 * seeking between headers */
-	int64_t		  max_header_position;
-
 	/* Nodes and offsets of compressed data block */
 	unsigned int data_start_node;
 	unsigned int data_end_node;
